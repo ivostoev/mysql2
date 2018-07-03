@@ -179,7 +179,8 @@ static VALUE mysql2_set_field_string_encoding(VALUE val, MYSQL_FIELD field, rb_e
     const char *enc_name;
     int enc_index;
 
-    enc_name = mysql2_mysql_enc_to_rb[field.charsetnr-1];
+    enc_name = (field.charsetnr-1 < CHARSETNR_SIZE) ? mysql2_mysql_enc_to_rb[field.charsetnr-1] : NULL;
+    
     if (enc_name != NULL) {
       /* use the field encoding we were able to match */
       enc_index = rb_enc_find_index(enc_name);
@@ -218,8 +219,8 @@ static void rb_mysql_result_alloc_result_buffers(VALUE self, MYSQL_FIELD *fields
   if (wrapper->result_buffers != NULL) return;
 
   wrapper->result_buffers = xcalloc(wrapper->numberOfFields, sizeof(MYSQL_BIND));
-  wrapper->is_null = xcalloc(wrapper->numberOfFields, sizeof(bool));
-  wrapper->error = xcalloc(wrapper->numberOfFields, sizeof(bool));
+  wrapper->is_null = xcalloc(wrapper->numberOfFields, sizeof(my_bool));
+  wrapper->error = xcalloc(wrapper->numberOfFields, sizeof(my_bool));
   wrapper->length = xcalloc(wrapper->numberOfFields, sizeof(unsigned long));
 
   for (i = 0; i < wrapper->numberOfFields; i++) {

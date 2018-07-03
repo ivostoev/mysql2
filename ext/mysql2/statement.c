@@ -115,7 +115,7 @@ VALUE rb_mysql_stmt_new(VALUE rb_client, VALUE sql) {
 
   // set STMT_ATTR_UPDATE_MAX_LENGTH attr
   {
-    bool truth = 1;
+    my_bool truth = 1;
     if (mysql_stmt_attr_set(stmt_wrapper->stmt, STMT_ATTR_UPDATE_MAX_LENGTH, &truth)) {
       rb_raise(cMysql2Error, "Unable to initialize prepared statement: set STMT_ATTR_UPDATE_MAX_LENGTH");
     }
@@ -184,7 +184,7 @@ static void set_buffer_for_string(MYSQL_BIND* bind_buffer, unsigned long *length
  * the buffer is a Ruby string pointer and not our memory to manage.
  */
 #define FREE_BINDS                                          \
-  for (i = 0; i < c; i++) {                                 \
+  for (i = 0; i < bind_count; i++) {                        \
     if (bind_buffers[i].buffer && NIL_P(params_enc[i])) {   \
       xfree(bind_buffers[i].buffer);                        \
     }                                                       \
@@ -247,14 +247,13 @@ static VALUE rb_mysql_stmt_execute(int argc, VALUE *argv, VALUE self) {
   MYSQL_BIND *bind_buffers = NULL;
   unsigned long *length_buffers = NULL;
   unsigned long bind_count;
-  long i;
-  int c;
+  unsigned long i;
   MYSQL_STMT *stmt;
   MYSQL_RES *metadata;
   VALUE opts;
   VALUE current;
   VALUE resultObj;
-  VALUE *params_enc;
+  VALUE *params_enc = NULL;
   int is_streaming;
   rb_encoding *conn_enc;
 
@@ -263,24 +262,26 @@ static VALUE rb_mysql_stmt_execute(int argc, VALUE *argv, VALUE self) {
 
   conn_enc = rb_to_encoding(wrapper->encoding);
 
-  // Get count of ordinary arguments, and extract hash opts/keyword arguments
-  c = rb_scan_args(argc, argv, "*:", NULL, &opts);
-
   stmt = stmt_wrapper->stmt;
-
   bind_count = mysql_stmt_param_count(stmt);
-  if (c != (long)bind_count) {
-    rb_raise(cMysql2Error, "Bind parameter count (%ld) doesn't match number of arguments (%d)", bind_count, c);
+
+  // Get count of ordinary arguments, and extract hash opts/keyword arguments
+  // Use a local scope to avoid leaking the temporary count variable
+  {
+    int c = rb_scan_args(argc, argv, "*:", NULL, &opts);
+    if (c != (long)bind_count) {
+      rb_raise(cMysql2Error, "Bind parameter count (%ld) doesn't match number of arguments (%d)", bind_count, c);
+    }
   }
 
   // setup any bind variables in the query
   if (bind_count > 0) {
     // Scratch space for string encoding exports, allocate on the stack
-    params_enc = alloca(sizeof(VALUE) * c);
+    params_enc = alloca(sizeof(VALUE) * bind_count);
     bind_buffers = xcalloc(bind_count, sizeof(MYSQL_BIND));
     length_buffers = xcalloc(bind_count, sizeof(unsigned long));
 
-    for (i = 0; i < c; i++) {
+    for (i = 0; i < bind_count; i++) {
       bind_buffers[i].buffer = NULL;
       params_enc[i] = Qnil;
 
@@ -402,6 +403,39 @@ static VALUE rb_mysql_stmt_execute(int argc, VALUE *argv, VALUE self) {
     }
   }
 
+  // Duplicate the options hash, merge! extra opts, put the copy into the Result object
+  current = rb_hash_dup(rb_iv_get(stmt_wrapper->client, "@query_options"));
+  (void)RB_GC_GUARD(current);
+  Check_Type(current, T_HASH);
+
+  // Merge in hash opts/keyword arguments
+  if (!NIL_P(opts)) {
+    rb_funcall(current, intern_merge_bang, 1, opts);
+  }
+
+  is_streaming = (Qtrue == rb_hash_aref(current, sym_stream));
+
+  // From stmt_execute to mysql_stmt_result_metadata to stmt_store_result, no
+  // Ruby API calls are allowed so that GC is not invoked. If the connection is
+  // in results-streaming-mode for Statement A, and in the middle Statement B
+  // gets garbage collected, a message will be sent to the server notifying it
+  // to release Statement B, resulting in the following error:
+  //   Commands out of sync; you can't run this command now
+  //
+  // In streaming mode, statement execute must return a cursor because we
+  // cannot prevent other Statement objects from being garbage collected
+  // between fetches of each row of the result set. The following error
+  // occurs if cursor mode is not set:
+  //   Row retrieval was canceled by mysql_stmt_close
+
+  if (is_streaming) {
+    unsigned long type = CURSOR_TYPE_READ_ONLY;
+    if (mysql_stmt_attr_set(stmt, STMT_ATTR_CURSOR_TYPE, &type)) {
+      FREE_BINDS;
+      rb_raise(cMysql2Error, "Unable to stream prepared statement, could not set CURSOR_TYPE_READ_ONLY");
+    }
+  }
+
   if ((VALUE)rb_thread_call_without_gvl(nogvl_stmt_execute, stmt, RUBY_UBF_IO, 0) == Qfalse) {
     FREE_BINDS;
     rb_raise_mysql2_stmt_error(stmt_wrapper);
@@ -420,17 +454,6 @@ static VALUE rb_mysql_stmt_execute(int argc, VALUE *argv, VALUE self) {
     return Qnil;
   }
 
-  // Duplicate the options hash, merge! extra opts, put the copy into the Result object
-  current = rb_hash_dup(rb_iv_get(stmt_wrapper->client, "@query_options"));
-  (void)RB_GC_GUARD(current);
-  Check_Type(current, T_HASH);
-
-  // Merge in hash opts/keyword arguments
-  if (!NIL_P(opts)) {
-    rb_funcall(current, intern_merge_bang, 1, opts);
-  }
-
-  is_streaming = (Qtrue == rb_hash_aref(current, sym_stream));
   if (!is_streaming) {
     // recieve the whole result set from the server
     if (mysql_stmt_store_result(stmt)) {
