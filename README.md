@@ -74,10 +74,11 @@ To see line numbers in backtraces, declare these environment variables
 
 ### Linux and other Unixes
 
-You may need to install a package such as `libmysqlclient-dev` or `mysql-devel`;
-refer to your distribution's package guide to find the particular package.
-The most common issue we see is a user who has the library file `libmysqlclient.so` but is
-missing the header file `mysql.h` -- double check that you have the _-dev_ packages installed.
+You may need to install a package such as `libmysqlclient-dev`, `mysql-devel`,
+or `default-libmysqlclient-dev`; refer to your distribution's package guide to
+find the particular package. The most common issue we see is a user who has
+the library file `libmysqlclient.so` but is missing the header file `mysql.h`
+-- double check that you have the _-dev_ packages installed.
 
 ### Mac OS X
 
@@ -138,7 +139,7 @@ results.each do |row|
   # conveniently, row is a hash
   # the keys are the fields, as you'd expect
   # the values are pre-built ruby primitives mapped from their corresponding field types in MySQL
-  puts row["id"] # row["id"].class == Fixnum
+  puts row["id"] # row["id"].is_a? Integer
   if row["dne"]  # non-existant hash entry is nil
     puts row["dne"]
   end
@@ -177,6 +178,9 @@ in place of each value and then execute the statement to retrieve a result set.
 Pass your arguments to the execute method in the same number and order as the
 question marks in the statement. Query options can be passed as keyword arguments
 to the execute method.
+
+Be sure to read about the known limitations of prepared statements at
+https://dev.mysql.com/doc/refman/5.6/en/c-api-prepared-statement-problems.html
 
 ``` ruby
 statement = @client.prepare("SELECT * FROM users WHERE login_count = ?")
@@ -523,17 +527,18 @@ As for field values themselves, I'm workin on it - but expect that soon.
 
 This gem is tested with the following Ruby versions on Linux and Mac OS X:
 
- * Ruby MRI 2.0.0, 2.1.x, 2.2.x, 2.3.x, 2.4.x, 2.5.x
+ * Ruby MRI 2.0.0, 2.1.x, 2.2.x, 2.3.x, 2.4.x, 2.5.x, 2.6.x
  * Rubinius 2.x and 3.x do work but may fail under some workloads
 
 This gem is tested with the following MySQL and MariaDB versions:
 
  * MySQL 5.5, 5.6, 5.7, 8.0
  * MySQL Connector/C 6.0 and 6.1 (primarily on Windows)
- * MariaDB 5.5, 10.0, 10.1, 10.2
+ * MariaDB 5.5, 10.0, 10.1, 10.2, 10.3
 
 ### Ruby on Rails / Active Record
 
+ * mysql2 0.5.x works with Rails / Active Record 5.0.7, 5.1.6, and higher.
  * mysql2 0.4.x works with Rails / Active Record 4.2.5 - 5.0 and higher.
  * mysql2 0.3.x works with Rails / Active Record 3.1, 3.2, 4.x, 5.0.
  * mysql2 0.2.x works with Rails / Active Record 2.3 - 3.0.
